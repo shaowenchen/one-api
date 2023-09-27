@@ -144,20 +144,9 @@ func streamResponseBaidu2OpenAI(baiduResponse *BaiduChatStreamResponse) *ChatCom
 }
 
 func embeddingRequestOpenAI2Baidu(request GeneralOpenAIRequest) *BaiduEmbeddingRequest {
-	baiduEmbeddingRequest := BaiduEmbeddingRequest{
-		Input: nil,
+	return &BaiduEmbeddingRequest{
+		Input: request.ParseInput(),
 	}
-	switch request.Input.(type) {
-	case string:
-		baiduEmbeddingRequest.Input = []string{request.Input.(string)}
-	case []any:
-		for _, item := range request.Input.([]any) {
-			if str, ok := item.(string); ok {
-				baiduEmbeddingRequest.Input = append(baiduEmbeddingRequest.Input, str)
-			}
-		}
-	}
-	return &baiduEmbeddingRequest
 }
 
 func embeddingResponseBaidu2OpenAI(response *BaiduEmbeddingResponse) *OpenAIEmbeddingResponse {
@@ -215,9 +204,11 @@ func baiduStreamHandler(c *gin.Context, resp *http.Response) (*OpenAIErrorWithSt
 				common.SysError("error unmarshalling stream response: " + err.Error())
 				return true
 			}
-			usage.PromptTokens += baiduResponse.Usage.PromptTokens
-			usage.CompletionTokens += baiduResponse.Usage.CompletionTokens
-			usage.TotalTokens += baiduResponse.Usage.TotalTokens
+			if baiduResponse.Usage.TotalTokens != 0 {
+				usage.TotalTokens = baiduResponse.Usage.TotalTokens
+				usage.PromptTokens = baiduResponse.Usage.PromptTokens
+				usage.CompletionTokens = baiduResponse.Usage.TotalTokens - baiduResponse.Usage.PromptTokens
+			}
 			response := streamResponseBaidu2OpenAI(&baiduResponse)
 			jsonResponse, err := json.Marshal(response)
 			if err != nil {
