@@ -4,10 +4,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/songquanpeng/one-api/common"
+	"github.com/songquanpeng/one-api/common/config"
+	"github.com/songquanpeng/one-api/common/logger"
+	"github.com/songquanpeng/one-api/model"
+	"github.com/songquanpeng/one-api/monitor"
+	"github.com/songquanpeng/one-api/relay/util"
 	"io"
 	"net/http"
-	"one-api/common"
-	"one-api/model"
 	"strconv"
 	"time"
 
@@ -92,7 +96,7 @@ func GetResponseBody(method, url string, channel *model.Channel, headers http.He
 	for k := range headers {
 		req.Header.Add(k, headers.Get(k))
 	}
-	res, err := httpClient.Do(req)
+	res, err := util.HTTPClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -292,7 +296,7 @@ func UpdateChannelBalance(c *gin.Context) {
 }
 
 func updateAllChannelsBalance() error {
-	channels, err := model.GetAllChannels(0, 0, true)
+	channels, err := model.GetAllChannels(0, 0, "all")
 	if err != nil {
 		return err
 	}
@@ -310,24 +314,23 @@ func updateAllChannelsBalance() error {
 		} else {
 			// err is nil & balance <= 0 means quota is used up
 			if balance <= 0 {
-				disableChannel(channel.Id, channel.Name, "余额不足")
+				monitor.DisableChannel(channel.Id, channel.Name, "余额不足")
 			}
 		}
-		time.Sleep(common.RequestInterval)
+		time.Sleep(config.RequestInterval)
 	}
 	return nil
 }
 
 func UpdateAllChannelsBalance(c *gin.Context) {
-	// TODO: make it async
-	err := updateAllChannelsBalance()
-	if err != nil {
-		c.JSON(http.StatusOK, gin.H{
-			"success": false,
-			"message": err.Error(),
-		})
-		return
-	}
+	//err := updateAllChannelsBalance()
+	//if err != nil {
+	//	c.JSON(http.StatusOK, gin.H{
+	//		"success": false,
+	//		"message": err.Error(),
+	//	})
+	//	return
+	//}
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",
@@ -338,8 +341,8 @@ func UpdateAllChannelsBalance(c *gin.Context) {
 func AutomaticallyUpdateChannels(frequency int) {
 	for {
 		time.Sleep(time.Duration(frequency) * time.Minute)
-		common.SysLog("updating all channels")
+		logger.SysLog("updating all channels")
 		_ = updateAllChannelsBalance()
-		common.SysLog("channels update done")
+		logger.SysLog("channels update done")
 	}
 }
