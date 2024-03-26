@@ -85,31 +85,31 @@ func InitDB() (err error) {
 		common.SysLog("database migration started")
 		err = db.AutoMigrate(&Channel{})
 		if err != nil {
-			// return err
+			return err
 		}
 		err = db.AutoMigrate(&Token{})
 		if err != nil {
-			// return err
+			return err
 		}
 		err = db.AutoMigrate(&User{})
 		if err != nil {
-			// return err
+			return err
 		}
 		err = db.AutoMigrate(&Option{})
 		if err != nil {
-			// return err
+			return err
 		}
 		err = db.AutoMigrate(&Redemption{})
 		if err != nil {
-			// return err
+			return err
 		}
 		err = db.AutoMigrate(&Ability{})
 		if err != nil {
-			// return err
+			return err
 		}
 		err = db.AutoMigrate(&Log{})
 		if err != nil {
-			// return err
+			return err
 		}
 		common.SysLog("database migrated")
 		err = createRootAccountIfNeed()
