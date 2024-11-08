@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/songquanpeng/one-api/common/render"
+
 	"github.com/songquanpeng/one-api/common"
 	"github.com/songquanpeng/one-api/common/config"
 	"github.com/songquanpeng/one-api/common/helper"
@@ -26,6 +28,11 @@ import (
 const (
 	VisionMaxImageNum = 16
 )
+
+var mimeTypeMap = map[string]string{
+	"json_object": "application/json",
+	"text":        "text/plain",
+}
 
 // Setting safety to the lowest possible values since Gemini is already powerless enough
 func ConvertRequest(textRequest model.GeneralOpenAIRequest) *ChatRequest {
@@ -54,6 +61,15 @@ func ConvertRequest(textRequest model.GeneralOpenAIRequest) *ChatRequest {
 			TopP:            textRequest.TopP,
 			MaxOutputTokens: textRequest.MaxTokens,
 		},
+	}
+	if textRequest.ResponseFormat != nil {
+		if mimeType, ok := mimeTypeMap[textRequest.ResponseFormat.Type]; ok {
+			geminiRequest.GenerationConfig.ResponseMimeType = mimeType
+		}
+		if textRequest.ResponseFormat.JsonSchema != nil {
+			geminiRequest.GenerationConfig.ResponseSchema = textRequest.ResponseFormat.JsonSchema.Schema
+			geminiRequest.GenerationConfig.ResponseMimeType = mimeTypeMap["json_object"]
+		}
 	}
 	if textRequest.Tools != nil {
 		functions := make([]model.Function, 0, len(textRequest.Tools))
@@ -275,64 +291,50 @@ func embeddingResponseGemini2OpenAI(response *EmbeddingResponse) *openai.Embeddi
 func StreamHandler(c *gin.Context, resp *http.Response) (*model.ErrorWithStatusCode, string) {
 	responseText := ""
 	scanner := bufio.NewScanner(resp.Body)
-	scanner.Split(func(data []byte, atEOF bool) (advance int, token []byte, err error) {
-		if atEOF && len(data) == 0 {
-			return 0, nil, nil
-		}
-		if i := strings.Index(string(data), "\n"); i >= 0 {
-			return i + 1, data[0:i], nil
-		}
-		if atEOF {
-			return len(data), data, nil
-		}
-		return 0, nil, nil
-	})
-	dataChan := make(chan string)
-	stopChan := make(chan bool)
-	go func() {
-		for scanner.Scan() {
-			data := scanner.Text()
-			data = strings.TrimSpace(data)
-			if !strings.HasPrefix(data, "data: ") {
-				continue
-			}
-			data = strings.TrimPrefix(data, "data: ")
-			data = strings.TrimSuffix(data, "\"")
-			dataChan <- data
-		}
-		stopChan <- true
-	}()
+	scanner.Split(bufio.ScanLines)
+
 	common.SetEventStreamHeaders(c)
-	c.Stream(func(w io.Writer) bool {
-		select {
-		case data := <-dataChan:
-			var geminiResponse ChatResponse
-			err := json.Unmarshal([]byte(data), &geminiResponse)
-			if err != nil {
-				logger.SysError("error unmarshalling stream response: " + err.Error())
-				return true
-			}
-			response := streamResponseGeminiChat2OpenAI(&geminiResponse)
-			if response == nil {
-				return true
-			}
-			responseText += response.Choices[0].Delta.StringContent()
-			jsonResponse, err := json.Marshal(response)
-			if err != nil {
-				logger.SysError("error marshalling stream response: " + err.Error())
-				return true
-			}
-			c.Render(-1, common.CustomEvent{Data: "data: " + string(jsonResponse)})
-			return true
-		case <-stopChan:
-			c.Render(-1, common.CustomEvent{Data: "data: [DONE]"})
-			return false
+
+	for scanner.Scan() {
+		data := scanner.Text()
+		data = strings.TrimSpace(data)
+		if !strings.HasPrefix(data, "data: ") {
+			continue
 		}
-	})
+		data = strings.TrimPrefix(data, "data: ")
+		data = strings.TrimSuffix(data, "\"")
+
+		var geminiResponse ChatResponse
+		err := json.Unmarshal([]byte(data), &geminiResponse)
+		if err != nil {
+			logger.SysError("error unmarshalling stream response: " + err.Error())
+			continue
+		}
+
+		response := streamResponseGeminiChat2OpenAI(&geminiResponse)
+		if response == nil {
+			continue
+		}
+
+		responseText += response.Choices[0].Delta.StringContent()
+
+		err = render.ObjectData(c, response)
+		if err != nil {
+			logger.SysError(err.Error())
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		logger.SysError("error reading stream: " + err.Error())
+	}
+
+	render.Done(c)
+
 	err := resp.Body.Close()
 	if err != nil {
 		return openai.ErrorWrapper(err, "close_response_body_failed", http.StatusInternalServerError), ""
 	}
+
 	return nil, responseText
 }
 
